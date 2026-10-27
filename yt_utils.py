@@ -25,9 +25,7 @@ def get_youtube_transcript(video_url: str):
     
     try:
         api = YouTubeTranscriptApi()
-        # Coba ambil transkrip menggunakan instance .fetch()
         fetched = api.fetch(video_id)
-        # Ubah objek fetched snippet menjadi format list of dict agar kompatibel
         transcript_data = []
         for snippet in fetched.snippets:
             transcript_data.append({
@@ -41,7 +39,7 @@ def get_youtube_transcript(video_url: str):
 
 def analyze_transcript_for_viral_clips(transcript, api_key: str = None, model: str = "gpt-4o"):
     """
-    Menganalisis transkrip untuk mencari segmen berpotensi viral.
+    Menganalisis transkrip untuk mencari segmen berpotensi viral dengan durasi ketat (30 detik - 90 detik).
     """
     formatted_text = ""
     for entry in transcript:
@@ -56,10 +54,12 @@ def analyze_transcript_for_viral_clips(transcript, api_key: str = None, model: s
     Anda adalah seorang ahli strategi konten sosial media (TikTok, Reels, YouTube Shorts). 
     Analisis transkrip video YouTube berikut dan berikan 3 hingga 5 rekomendasi segmen (klip) yang memiliki potensi PALING TINGGI untuk viral.
     
+    ATURAN DURASI KETAT:
+    - Setiap klip DURASINYA HARUS BERKISAR ANTARA 30 DETIK HINGGA 90 DETIK (maksimal 1.5 menit). JANGAN ADA YANG LEBIH DARI 90 DETIK.
+    
     Kriteria klip viral:
     1. Memiliki "hook" (pancingan) yang kuat di awal.
-    2. Menyampaikan satu poin emosional, kontroversial, lucu, atau insight bernilai tinggi secara utuh.
-    3. Berdurasi antara 30 detik hingga 90 detik.
+    2. Menyampaikan satu poin emosional, kontroversial, lucu, atau insight bernilai tinggi secara utuh dalam rentang 30 - 90 detik tersebut.
     
     Berikan output dalam format JSON valid berupa list of object dengan struktur berikut:
     [
@@ -68,7 +68,7 @@ def analyze_transcript_for_viral_clips(transcript, api_key: str = None, model: s
         "start_time": "MM:SS",
         "end_time": "MM:SS",
         "start_seconds": 120,
-        "end_seconds": 185,
+        "end_seconds": 175,
         "viral_score": 92,
         "reason": "Alasan singkat mengapa bagian ini sangat potensial viral"
       }}
@@ -102,7 +102,19 @@ def analyze_transcript_for_viral_clips(transcript, api_key: str = None, model: s
                 if isinstance(parsed, dict):
                     for k, v in parsed.items():
                         if isinstance(v, list):
-                            return v
+                            # Validasi durasi klip 30s - 90s
+                            validated = []
+                            for clip in v:
+                                dur = clip.get('end_seconds', 0) - clip.get('start_seconds', 0)
+                                if 30 <= dur <= 90:
+                                    validated.append(clip)
+                                else:
+                                    # Koreksi otomatis jika melenceng dari rentang
+                                    clip['end_seconds'] = clip.get('start_seconds', 0) + 60
+                                    m_end, s_end = divmod(clip['end_seconds'], 60)
+                                    clip['end_time'] = f"{m_end:02d}:{s_end:02d}"
+                                    validated.append(clip)
+                            return validated if validated else generate_heuristic_clips(transcript)
                 return parsed
         except Exception as e:
             pass
@@ -110,31 +122,34 @@ def analyze_transcript_for_viral_clips(transcript, api_key: str = None, model: s
     return generate_heuristic_clips(transcript)
 
 def generate_heuristic_clips(transcript):
-    """Algoritma pintar berbasis heuristik."""
+    """Algoritma pintar berbasis heuristik dengan durasi ketat 45-60 detik."""
     clips = []
-    chunk_size = max(1, len(transcript) // 4)
+    total_entries = len(transcript)
+    if total_entries == 0:
+        return []
     
-    for i in range(0, len(transcript), chunk_size):
-        chunk = transcript[i:i + chunk_size]
-        if not chunk:
-            continue
-        start_sec = int(chunk[0].get('start', 0))
-        end_sec = int(chunk[-1].get('start', 0) + chunk[-1].get('duration', 5))
-        
-        if end_sec - start_sec < 20:
-            end_sec = start_sec + 45
+    # Ambil sampel beberapa titik menarik sepanjang video
+    step = max(1, total_entries // 5)
+    for i in range(1, 5):
+        idx = i * step
+        if idx >= total_entries:
+            idx = total_entries - 1
             
+        start_sec = int(transcript[idx].get('start', 0))
+        # Durasi klip dibuat pas 60 detik (1 menit)
+        end_sec = start_sec + 60
+        
         m_start, s_start = divmod(start_sec, 60)
         m_end, s_end = divmod(end_sec, 60)
         
         clips.append({
-            "title": f"Highlight Potensial #{len(clips)+1}",
+            "title": f"Viral Highlight Potensial #{i}",
             "start_time": f"{m_start:02d}:{s_start:02d}",
             "end_time": f"{m_end:02d}:{s_end:02d}",
             "start_seconds": start_sec,
             "end_seconds": end_sec,
-            "viral_score": 85 - (len(clips) * 5),
-            "reason": "Bagian ini memiliki dinamika pembicaraan yang menarik dan cocok untuk format pendek."
+            "viral_score": 88 - (i * 3),
+            "reason": "Segmen ini diambil dengan durasi pas 60 detik yang ideal untuk Shorts/Reels/TikTok."
         })
         if len(clips) >= 4:
             break
