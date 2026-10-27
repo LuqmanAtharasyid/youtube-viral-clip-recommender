@@ -18,40 +18,40 @@ def extract_video_id(url: str) -> str:
     return None
 
 def get_youtube_transcript(video_url: str):
-    """Mengambil transkrip dari video YouTube."""
+    """Mengambil transkrip dari video YouTube menggunakan instance YouTubeTranscriptApi terbaru."""
     video_id = extract_video_id(video_url)
     if not video_id:
         raise ValueError("URL YouTube tidak valid!")
     
     try:
-        # Coba ambil transkrip bahasa Indonesia atau Inggris
-        transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=['id', 'en', 'id-ID'])
-        return video_id, transcript_list
+        api = YouTubeTranscriptApi()
+        # Coba ambil transkrip menggunakan instance .fetch()
+        fetched = api.fetch(video_id)
+        # Ubah objek fetched snippet menjadi format list of dict agar kompatibel
+        transcript_data = []
+        for snippet in fetched.snippets:
+            transcript_data.append({
+                'text': snippet.text,
+                'start': snippet.start,
+                'duration': snippet.duration
+            })
+        return video_id, transcript_data
     except Exception as e:
-        # Fallback coba ambil transkrip apapun yang tersedia
-        try:
-            transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-            for tr in transcript_list:
-                fetched = tr.fetch()
-                return video_id, fetched
-        except Exception as inner_e:
-            raise RuntimeError(f"Gagal mengambil transkrip: {str(inner_e)}")
+        raise RuntimeError(f"Gagal mengambil transkrip video ini: {str(e)}")
 
 def analyze_transcript_for_viral_clips(transcript, api_key: str = None, model: str = "gpt-4o"):
     """
     Menganalisis transkrip untuk mencari segmen berpotensi viral.
-    Menggunakan pendekatan OpenAI-compatible API (mendukung model sejenis OpenAI, OpenRouter, dll).
     """
-    # Format transkrip menjadi teks dengan timestamp
     formatted_text = ""
     for entry in transcript:
-        start_sec = int(entry['start'])
+        start_sec = int(entry.get('start', 0))
+        text = entry.get('text', '')
         minutes = start_sec // 60
         seconds = start_sec % 60
         time_str = f"[{minutes:02d}:{seconds:02d}]"
-        formatted_text += f"{time_str} {entry['text']}\n"
+        formatted_text += f"{time_str} {text}\n"
     
-    # Jika teks terlalu panjang, kita ambil sampel atau potong jika perlu (untuk MVP ini dikirim utuh/chunking sederhana)
     prompt = f"""
     Anda adalah seorang ahli strategi konten sosial media (TikTok, Reels, YouTube Shorts). 
     Analisis transkrip video YouTube berikut dan berikan 3 hingga 5 rekomendasi segmen (klip) yang memiliki potensi PALING TINGGI untuk viral.
@@ -78,14 +78,12 @@ def analyze_transcript_for_viral_clips(transcript, api_key: str = None, model: s
     {formatted_text[:12000]}
     """
 
-    # Jika user memasukkan API Key, gunakan OpenAI / OpenRouter API
     if api_key:
         try:
             headers = {
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json"
             }
-            # Mendukung endpoint standar OpenAI atau OpenRouter
             payload = {
                 "model": model,
                 "messages": [
@@ -101,21 +99,18 @@ def analyze_transcript_for_viral_clips(transcript, api_key: str = None, model: s
                 res_json = response.json()
                 content = res_json['choices'][0]['message']['content']
                 parsed = json.loads(content)
-                # Handle jika dibungkus key tertentu
                 if isinstance(parsed, dict):
                     for k, v in parsed.items():
                         if isinstance(v, list):
                             return v
                 return parsed
         except Exception as e:
-            # Jika gagal API call, fallback ke heuristic analysis
             pass
 
-    # Fallback heuristic / mock AI intelligent scoring jika tidak ada API key
     return generate_heuristic_clips(transcript)
 
 def generate_heuristic_clips(transcript):
-    """Algoritma pintar berbasis heuristik jika API key tidak diset."""
+    """Algoritma pintar berbasis heuristik."""
     clips = []
     chunk_size = max(1, len(transcript) // 4)
     
@@ -123,8 +118,8 @@ def generate_heuristic_clips(transcript):
         chunk = transcript[i:i + chunk_size]
         if not chunk:
             continue
-        start_sec = int(chunk[0]['start'])
-        end_sec = int(chunk[-1]['start'] + chunk[-1].get('duration', 5))
+        start_sec = int(chunk[0].get('start', 0))
+        end_sec = int(chunk[-1].get('start', 0) + chunk[-1].get('duration', 5))
         
         if end_sec - start_sec < 20:
             end_sec = start_sec + 45
