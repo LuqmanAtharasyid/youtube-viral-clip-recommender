@@ -20,16 +20,11 @@ def extract_video_id(url: str) -> str:
     return None
 
 def get_youtube_transcript(video_url: str):
-    """
-    Mengambil transkrip YouTube dengan metode cadangan ganda (Robust fallback):
-    1. Menggunakan youtube-transcript-api standar.
-    2. Jika diblokir (IP Blocked), fallback mengambil subtitle otomatis via yt-dlp.
-    """
+    """Mengambil transkrip YouTube dengan metode cadangan ganda (Robust fallback)."""
     video_id = extract_video_id(video_url)
     if not video_id:
         raise ValueError("URL YouTube tidak valid!")
     
-    # Metode 1: Coba via youtube-transcript-api
     try:
         api = YouTubeTranscriptApi()
         fetched = api.fetch(video_id)
@@ -42,7 +37,6 @@ def get_youtube_transcript(video_url: str):
             })
         return video_id, transcript_data
     except Exception as e_api:
-        # Jika gagal karena blokir IP atau tidak ada subtitle resmi, gunakan Metode 2 (yt-dlp subtitle dump)
         try:
             return get_transcript_via_ytdlp(video_url, video_id)
         except Exception as e_ytdlp:
@@ -54,7 +48,6 @@ def get_youtube_transcript(video_url: str):
 def get_transcript_via_ytdlp(video_url: str, video_id: str):
     """Fallback menggunakan yt-dlp untuk mengunduh subtitle otomatis."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        # Command yt-dlp untuk menulis subtitle ke file json3/vtt
         cmd = [
             "yt-dlp",
             "--skip-download",
@@ -68,7 +61,6 @@ def get_transcript_via_ytdlp(video_url: str, video_id: str):
         
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         
-        # Cari file subtitle yang dihasilkan
         for file in os.listdir(tmpdir):
             if file.endswith('.json3'):
                 filepath = os.path.join(tmpdir, file)
@@ -94,7 +86,8 @@ def get_transcript_via_ytdlp(video_url: str, video_id: str):
 
 def analyze_transcript_for_viral_clips(transcript, api_key: str = None, model: str = "gpt-4o"):
     """
-    Menganalisis transkrip untuk mencari segmen berpotensi viral dengan durasi ketat (30 detik - 90 detik).
+    Menganalisis transkrip untuk mencari segmen berpotensi viral (30s-90s)
+    lengkap dengan saran caption sosmed bernuansa viral.
     """
     formatted_text = ""
     for entry in transcript:
@@ -106,26 +99,33 @@ def analyze_transcript_for_viral_clips(transcript, api_key: str = None, model: s
         formatted_text += f"{time_str} {text}\n"
     
     prompt = f"""
-    Anda adalah seorang ahli strategi konten sosial media (TikTok, Reels, YouTube Shorts). 
+    Anda adalah seorang ahli strategi konten sosial media top (TikTok, Reels, YouTube Shorts). 
     Analisis transkrip video YouTube berikut dan berikan 3 hingga 5 rekomendasi segmen (klip) yang memiliki potensi PALING TINGGI untuk viral.
     
     ATURAN DURASI KETAT:
-    - Setiap klip DURASINYA HARUS BERKISAR ANTARA 30 DETIK HINGGA 90 DETIK (maksimal 1.5 menit). JANGAN ADA YANG LEBIH DARI 90 DETIK.
+    - Setiap klip DURASINYA HARUS BERKISAR ANTARA 30 DETIK HINGGA 90 DETIK (maksimal 1.5 menit).
     
-    Kriteria klip viral:
-    1. Memiliki "hook" (pancingan) yang kuat di awal.
-    2. Menyampaikan satu poin emosional, kontroversial, lucu, atau insight bernilai tinggi secara utuh dalam rentang 30 - 90 detik tersebut.
+    UNTUK SETIAP KLIP, SERTAKAN:
+    1. title: Judul klip yang menarik / clickbait sehat.
+    2. start_time: Format MM:SS.
+    3. end_time: Format MM:SS.
+    4. start_seconds: Detik mulai (integer).
+    5. end_seconds: Detik selesai (integer).
+    6. viral_score: Skor potensi viral (angka 75 - 99).
+    7. reason: Alasan singkat mengapa bagian ini potensial viral.
+    8. caption: Saran caption sosial media (TikTok/Reels/Shorts) yang sangat engaging, memancing rasa penasaran (curiosity gap), memicu komentar (engagement), lengkap dengan hashtag populer yang relevan.
     
     Berikan output dalam format JSON valid berupa list of object dengan struktur berikut:
     [
       {{
-        "title": "Judul klip yang menarik/clickbait sehat",
-        "start_time": "MM:SS",
-        "end_time": "MM:SS",
-        "start_seconds": 120,
-        "end_seconds": 175,
+        "title": "...",
+        "start_time": "01:20",
+        "end_time": "02:10",
+        "start_seconds": 80,
+        "end_seconds": 130,
         "viral_score": 92,
-        "reason": "Alasan singkat mengapa bagian ini sangat potensial viral"
+        "reason": "...",
+        "caption": "Kalimat caption pemancing interaksi / komentar... #fyp #viral #trending"
       }}
     ]
 
@@ -166,6 +166,8 @@ def analyze_transcript_for_viral_clips(transcript, api_key: str = None, model: s
                                     clip['end_seconds'] = clip.get('start_seconds', 0) + 60
                                     m_end, s_end = divmod(clip['end_seconds'], 60)
                                     clip['end_time'] = f"{m_end:02d}:{s_end:02d}"
+                                    if not clip.get('caption'):
+                                        clip['caption'] = "Setuju gak sama pendapat ini? Coba komen di bawah! 👇 #fyp #trending"
                                     validated.append(clip)
                             return validated if validated else generate_heuristic_clips(transcript)
                 return parsed
@@ -175,7 +177,7 @@ def analyze_transcript_for_viral_clips(transcript, api_key: str = None, model: s
     return generate_heuristic_clips(transcript)
 
 def generate_heuristic_clips(transcript):
-    """Algoritma pintar berbasis heuristik dengan durasi ketat 45-60 detik."""
+    """Algoritma pintar berbasis heuristik lengkap dengan saran caption."""
     clips = []
     total_entries = len(transcript)
     if total_entries == 0:
@@ -200,7 +202,8 @@ def generate_heuristic_clips(transcript):
             "start_seconds": start_sec,
             "end_seconds": end_sec,
             "viral_score": 88 - (i * 3),
-            "reason": "Segmen ini diambil dengan durasi pas 60 detik yang ideal untuk Shorts/Reels/TikTok."
+            "reason": "Segmen ini diambil dengan durasi pas 60 detik yang ideal untuk Shorts/Reels/TikTok.",
+            "caption": f"Gimana menurut kalian tentang hal ini? Wajib nonton sampe habis! 🤯🔥 #InsightMenarik #fypシ #ViralClip #{i}"
         })
         if len(clips) >= 4:
             break

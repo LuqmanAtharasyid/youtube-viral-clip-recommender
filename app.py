@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from yt_utils import get_youtube_transcript, analyze_transcript_for_viral_clips, extract_video_id
+from yt_utils import get_youtube_transcript, analyze_transcript_for_viral_clips
 
 st.set_page_config(
     page_title="YouTube Viral Clip Recommender",
@@ -36,6 +36,15 @@ st.markdown("""
         border-radius: 5px;
         font-weight: bold;
     }
+    .caption-box {
+        background-color: #2b2b2b;
+        border-left: 4px solid #FF4B4B;
+        padding: 10px 15px;
+        border-radius: 4px;
+        margin-top: 10px;
+        font-family: monospace;
+        color: #f1f1f1;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -43,31 +52,30 @@ st.markdown("""
 st.sidebar.title("⚙️ Pengaturan AI")
 api_key_input = st.sidebar.text_input("OpenAI / OpenRouter API Key (Opsional)", type="password", help="Kosongkan untuk menggunakan mode Heuristik cerdas bawaan.")
 model_choice = st.sidebar.selectbox("Pilih Model AI", ["gpt-4o", "gpt-4o-mini", "claude-3-5-sonnet"], index=0)
-st.sidebar.info("💡 Aplikasi ini mendeteksi transkrip YouTube secara otomatis dan memberikan rekomendasi timestamp klip terbaik untuk TikTok / Shorts / Reels.")
+st.sidebar.info("💡 Aplikasi ini mendeteksi transkrip YouTube, memberikan rekomendasi klip berdurasi 30-90 detik, lengkap dengan saran caption pemancing interaksi.")
 
 # Main Interface
-st.markdown('<div class="main-header">🎬 YouTube Viral Clip Recommender</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub-header">Masukkan link video YouTube, biarkan AI menganalisis bagian paling menarik dan potensial viral!</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header">🎬 YouTube Viral Clip Recommender & Caption Generator</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub-header">Masukkan link video YouTube, dapatkan rekomendasi timestamp klip pendek (30-90 detik) beserta saran caption siap post!</div>', unsafe_allow_html=True)
 
 # Input Form
 with st.form("clip_form"):
     youtube_url = st.text_input("🔗 Link Video YouTube (atau Video ID):", placeholder="https://www.youtube.com/watch?v=...")
-    submitted = st.form_submit_button("🔍 Analisis Video & Cari Klip Viral")
+    submitted = st.form_submit_button("🔍 Analisis Video & Generate Klip Viral")
 
 if submitted:
     if not youtube_url.strip():
         st.warning("⚠️ Mohon masukkan link YouTube terlebih dahulu!")
     else:
-        with st.spinner("⏳ Sedang mengambil transkrip dan menganalisis konten..."):
+        with st.spinner("⏳ Sedang mengambil transkrip dan menganalisis klip viral & caption..."):
             try:
                 video_id, transcript = get_youtube_transcript(youtube_url)
                 st.session_state['video_id'] = video_id
                 st.session_state['transcript'] = transcript
                 
-                # Analisis AI / Heuristik
                 clips = analyze_transcript_for_viral_clips(transcript, api_key=api_key_input, model=model_choice)
                 st.session_state['clips'] = clips
-                st.success("✅ Analisis selesai!")
+                st.success("✅ Analisis berhasil diselesaikan!")
             except Exception as e:
                 st.error(f"❌ Terjadi kesalahan: {str(e)}")
 
@@ -83,23 +91,26 @@ if 'clips' in st.session_state and st.session_state['clips']:
             st.video(f"https://www.youtube.com/watch?v={vid_id}")
             
     with col2:
-        st.subheader("🔥 Rekomendasi Klip Potensi Viral")
+        st.subheader("🔥 Rekomendasi Klip & Saran Caption")
         clips = st.session_state['clips']
         
         for idx, clip in enumerate(clips):
-            score = clip.get('viral_score', 80)
+            score = clip.get('viral_score', 85)
             title = clip.get('title', f'Klip #{idx+1}')
             start_t = clip.get('start_time', '00:00')
             end_t = clip.get('end_time', '00:00')
-            reason = clip.get('reason', 'Potongan menarik dari video.')
+            reason = clip.get('reason', 'Potongan menarik.')
+            caption = clip.get('caption', 'Coba komen pendapat kalian! #fyp #viral')
             
             with st.container():
                 st.markdown(f"""
                 <div class="clip-card">
                     <h4>#{idx+1}: {title}</h4>
-                    <p><b>⏱️ Timestamp:</b> <code>{start_t}</code> s.d. <code>{end_t}</code> &nbsp;&nbsp; 
-                    <span class="metric-badge">Skor Viral: {score}/100</span></p>
+                    <p><b>⏱️ Durasi (30s - 90s):</b> <code>{start_t}</code> s.d. <code>{end_t}</code> &nbsp;&nbsp; 
+                    <span class="metric-badge">Skor: {score}/100</span></p>
                     <p><b>💡 Alasan:</b> {reason}</p>
+                    <p style="margin-bottom: 5px;"><b>✍️ Saran Caption Viral:</b></p>
+                    <div class="caption-box">{caption}</div>
                 </div>
                 """, unsafe_allow_html=True)
 
@@ -109,8 +120,8 @@ if 'clips' in st.session_state and st.session_state['clips']:
     df_clips = pd.DataFrame(st.session_state['clips'])
     csv = df_clips.to_csv(index=False).encode('utf-8')
     st.download_button(
-        label="Download Jadwal Timestamp (CSV)",
+        label="Download Data Klip & Caption (CSV)",
         data=csv,
-        file_name=f"viral_clips_{st.session_state.get('video_id', 'youtube')}.csv",
+        file_name=f"viral_clips_with_captions_{st.session_state.get('video_id', 'youtube')}.csv",
         mime='text/csv',
     )
