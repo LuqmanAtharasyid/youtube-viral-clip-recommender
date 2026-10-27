@@ -1,8 +1,10 @@
 import os
 import re
+import subprocess
+import json
+import tempfile
 from youtube_transcript_api import YouTubeTranscriptApi
 import requests
-import json
 
 def extract_video_id(url: str) -> str:
     """Ekstrak video ID dari berbagai format URL YouTube."""
@@ -18,11 +20,16 @@ def extract_video_id(url: str) -> str:
     return None
 
 def get_youtube_transcript(video_url: str):
-    """Mengambil transkrip dari video YouTube menggunakan instance YouTubeTranscriptApi terbaru."""
+    """
+    Mengambil transkrip YouTube dengan metode cadangan ganda (Robust fallback):
+    1. Menggunakan youtube-transcript-api standar.
+    2. Jika diblokir (IP Blocked), fallback mengambil subtitle otomatis via yt-dlp.
+    """
     video_id = extract_video_id(video_url)
     if not video_id:
         raise ValueError("URL YouTube tidak valid!")
     
+    # Metode 1: Coba via youtube-transcript-api
     try:
         api = YouTubeTranscriptApi()
         fetched = api.fetch(video_id)
@@ -34,8 +41,56 @@ def get_youtube_transcript(video_url: str):
                 'duration': snippet.duration
             })
         return video_id, transcript_data
-    except Exception as e:
-        raise RuntimeError(f"Gagal mengambil transkrip video ini: {str(e)}")
+    except Exception as e_api:
+        # Jika gagal karena blokir IP atau tidak ada subtitle resmi, gunakan Metode 2 (yt-dlp subtitle dump)
+        try:
+            return get_transcript_via_ytdlp(video_url, video_id)
+        except Exception as e_ytdlp:
+            raise RuntimeError(
+                f"Gagal mengambil transkrip. YouTube memblokir akses atau video tidak memiliki subtitle. "
+                f"Detail Error: {str(e_api)} | Fallback Error: {str(e_ytdlp)}"
+            )
+
+def get_transcript_via_ytdlp(video_url: str, video_id: str):
+    """Fallback menggunakan yt-dlp untuk mengunduh subtitle otomatis."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # Command yt-dlp untuk menulis subtitle ke file json3/vtt
+        cmd = [
+            "yt-dlp",
+            "--skip-download",
+            "--write-subs",
+            "--write-auto-subs",
+            "--sub-langs", "id,en,en-US",
+            "--sub-format", "json3",
+            "-o", os.path.join(tmpdir, "%(id)s"),
+            video_url
+        ]
+        
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        
+        # Cari file subtitle yang dihasilkan
+        for file in os.listdir(tmpdir):
+            if file.endswith('.json3'):
+                filepath = os.path.join(tmpdir, file)
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    transcript_data = []
+                    events = data.get('events', [])
+                    for ev in events:
+                        segs = ev.get('segs', [])
+                        text = "".join([s.get('utf8', '') for s in segs]).strip()
+                        if text and text != '\n':
+                            start_ms = ev.get('tStartMs', 0)
+                            dur_ms = ev.get('dDurationMs', 2000)
+                            transcript_data.append({
+                                'text': text,
+                                'start': start_ms / 1000.0,
+                                'duration': dur_ms / 1000.0
+                            })
+                    if transcript_data:
+                        return video_id, transcript_data
+                        
+        raise RuntimeError("yt-dlp tidak dapat menemukan subtitle atau teks transkrip untuk video ini.")
 
 def analyze_transcript_for_viral_clips(transcript, api_key: str = None, model: str = "gpt-4o"):
     """
@@ -102,14 +157,12 @@ def analyze_transcript_for_viral_clips(transcript, api_key: str = None, model: s
                 if isinstance(parsed, dict):
                     for k, v in parsed.items():
                         if isinstance(v, list):
-                            # Validasi durasi klip 30s - 90s
                             validated = []
                             for clip in v:
                                 dur = clip.get('end_seconds', 0) - clip.get('start_seconds', 0)
                                 if 30 <= dur <= 90:
                                     validated.append(clip)
                                 else:
-                                    # Koreksi otomatis jika melenceng dari rentang
                                     clip['end_seconds'] = clip.get('start_seconds', 0) + 60
                                     m_end, s_end = divmod(clip['end_seconds'], 60)
                                     clip['end_time'] = f"{m_end:02d}:{s_end:02d}"
@@ -128,7 +181,6 @@ def generate_heuristic_clips(transcript):
     if total_entries == 0:
         return []
     
-    # Ambil sampel beberapa titik menarik sepanjang video
     step = max(1, total_entries // 5)
     for i in range(1, 5):
         idx = i * step
@@ -136,7 +188,6 @@ def generate_heuristic_clips(transcript):
             idx = total_entries - 1
             
         start_sec = int(transcript[idx].get('start', 0))
-        # Durasi klip dibuat pas 60 detik (1 menit)
         end_sec = start_sec + 60
         
         m_start, s_start = divmod(start_sec, 60)
