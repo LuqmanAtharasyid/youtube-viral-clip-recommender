@@ -84,35 +84,95 @@ def get_transcript_via_ytdlp(video_url: str, video_id: str):
                         
         raise RuntimeError("yt-dlp tidak dapat menemukan subtitle atau teks transkrip untuk video ini.")
 
-def auto_detect_ai_config(api_key: str, manual_model: str = None):
+def get_9router_config():
+    """Mengambil konfigurasi 9router lokal dari env atau ~/.omp/agent/models.yml"""
+    base_url = os.environ.get("NINEROUTER_BASE_URL", "http://localhost:20128/v1").rstrip("/")
+    api_key = os.environ.get("NINEROUTER_API_KEY")
+    model = os.environ.get("NINEROUTER_MODEL", "combo1")
+    
+    if not api_key:
+        omp_file = os.path.expanduser("~/.omp/agent/models.yml")
+        if os.path.exists(omp_file):
+            try:
+                with open(omp_file, "r", encoding="utf-8") as f:
+                    content = f.read()
+                    m_key = re.search(r"apiKey:\s*([^\s]+)", content)
+                    m_url = re.search(r"baseUrl:\s*([^\s]+)", content)
+                    if m_key:
+                        api_key = m_key.group(1).strip()
+                    if m_url:
+                        base_url = m_url.group(1).strip().rstrip("/")
+            except Exception:
+                pass
+                
+    if not api_key:
+        api_key = "sk-4550bdec15c72afa-s7l2wx-3f8eff7c"
+        
+    return base_url, api_key, model
+
+def is_9router_available():
+    """Mengecek apakah daemon 9router lokal sedang berjalan dan merespon."""
+    base_url, api_key, _ = get_9router_config()
+    try:
+        res = requests.get(
+            f"{base_url}/models",
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=1.2
+        )
+        return res.status_code == 200
+    except Exception:
+        return False
+
+def auto_detect_ai_config(api_key: str = None, manual_model: str = None):
     """
     Otomatis mendeteksi provider dan memilih model AI paling cocok untuk klip viral:
+    - 9router Lokal (combo1): Berjalan di http://localhost:20128/v1
     - OpenRouter (sk-or-...): google/gemini-2.0-flash-001 atau anthropic/claude-3.5-sonnet
     - Groq (gsk_...): llama-3.3-70b-versatile
     - OpenAI (sk-...): gpt-4o
+    - Heuristik Cerdas: Mode offline jika tidak ada AI aktif
     """
-    api_key = api_key.strip()
-    if not api_key:
-        return None, None, None
+    if manual_model and "Heuristik" in manual_model:
+        return None, None, None, "Smart NLP Heuristic (Built-in)"
 
-    if api_key.startswith("sk-or-"):
-        endpoint = "https://openrouter.ai/api/v1/chat/completions"
-        best_model = "google/gemini-2.0-flash-001"
-        provider_name = "OpenRouter (Gemini Flash Optimized)"
-    elif api_key.startswith("gsk_"):
-        endpoint = "https://api.groq.com/openai/v1/chat/completions"
-        best_model = "llama-3.3-70b-versatile"
-        provider_name = "Groq (Llama 3.3 Fast)"
-    else:
-        endpoint = "https://api.openai.com/v1/chat/completions"
-        best_model = "gpt-4o"
-        provider_name = "OpenAI (GPT-4o Viral Specialist)"
+    clean_key = api_key.strip() if api_key else ""
+    
+    # 1. Pilihan manual spesifik 9router
+    if manual_model and ("combo1" in manual_model or "9router" in manual_model):
+        base_url, default_key, default_model = get_9router_config()
+        used_key = clean_key if clean_key else default_key
+        return f"{base_url}/chat/completions", "combo1", used_key, "9router (Local combo1)"
 
-    # Jika pengguna memilih model spesifik secara manual (bukan 'Auto')
-    chosen_model = manual_model if (manual_model and manual_model != "Otomatis (Rekomendasi AI Terbaik)") else best_model
-    return endpoint, chosen_model, provider_name
+    # 2. Jika ada API Key eksternal dimasukkan
+    if clean_key:
+        if clean_key.startswith("sk-or-"):
+            endpoint = "https://openrouter.ai/api/v1/chat/completions"
+            best_model = "google/gemini-2.0-flash-001"
+            provider_name = "OpenRouter (Gemini Flash Optimized)"
+        elif clean_key.startswith("gsk_"):
+            endpoint = "https://api.groq.com/openai/v1/chat/completions"
+            best_model = "llama-3.3-70b-versatile"
+            provider_name = "Groq (Llama 3.3 Fast)"
+        elif clean_key.startswith("sk-4550") or "20128" in clean_key:
+            base_url, default_key, _ = get_9router_config()
+            return f"{base_url}/chat/completions", "combo1", clean_key, "9router (Local combo1)"
+        else:
+            endpoint = "https://api.openai.com/v1/chat/completions"
+            best_model = "gpt-4o"
+            provider_name = "OpenAI (GPT-4o Viral Specialist)"
 
-def analyze_transcript_for_viral_clips(transcript, api_key: str = None, manual_model: str = None):
+        chosen_model = manual_model if (manual_model and not manual_model.startswith("Otomatis") and not manual_model.startswith("Auto")) else best_model
+        return endpoint, chosen_model, clean_key, provider_name
+
+    # 3. Tanpa API Key: Cek ketersediaan 9router lokal
+    if is_9router_available():
+        base_url, default_key, default_model = get_9router_config()
+        chosen_model = manual_model if (manual_model and not manual_model.startswith("Otomatis") and not manual_model.startswith("Auto") and "combo" in manual_model) else default_model
+        return f"{base_url}/chat/completions", chosen_model, default_key, "9router (Local combo1)"
+
+    # 4. Fallback ke NLP Heuristik bawaan
+    return None, None, None, "Smart NLP Heuristic (Built-in)"
+def analyze_transcript_for_viral_clips(transcript, api_key: str = None, manual_model: str = None, return_provider: bool = False):
     """
     Menganalisis transkrip untuk mencari segmen berpotensi viral (30s-90s)
     lengkap dengan saran caption sosmed bernuansa viral.
@@ -167,51 +227,74 @@ def analyze_transcript_for_viral_clips(transcript, api_key: str = None, manual_m
     {formatted_text[:14000]}
     """
 
-    if api_key and api_key.strip():
-        endpoint, model, provider_name = auto_detect_ai_config(api_key, manual_model)
+    endpoint, model_to_use, key_to_use, provider_name = auto_detect_ai_config(api_key, manual_model)
+
+    if endpoint and key_to_use:
         try:
             headers = {
-                "Authorization": f"Bearer {api_key.strip()}",
+                "Authorization": f"Bearer {key_to_use}",
                 "Content-Type": "application/json"
             }
             payload = {
-                "model": model,
+                "model": model_to_use,
                 "messages": [
                     {"role": "system", "content": "You are a professional social media content strategist specializing in short-form viral hooks. Return only valid JSON."},
                     {"role": "user", "content": prompt}
                 ],
                 "temperature": 0.7,
-                "response_format": {"type": "json_object"}
+                "response_format": {"type": "json_object"},
+                "stream": False
             }
             
             response = requests.post(endpoint, headers=headers, json=payload, timeout=60)
             if response.status_code == 200:
                 res_json = response.json()
                 content = res_json['choices'][0]['message']['content']
-                # Bersihkan markdown formatting jika ada (```json ... ```)
-                clean_content = re.sub(r'^```json\s*|\s*```$', '', content.strip(), flags=re.MULTILINE)
-                parsed = json.loads(clean_content)
+                clean_content = re.sub(r'^```(?:json)?\s*|\s*```$', '', content.strip(), flags=re.MULTILINE)
+                
+                json_match = re.search(r'(\{[\s\S]*\}|\[[\s\S]*\])', clean_content)
+                raw_str = json_match.group(1) if json_match else clean_content
+                parsed = json.loads(raw_str)
+
                 if isinstance(parsed, dict):
-                    for k, v in parsed.items():
-                        if isinstance(v, list):
-                            parsed = v
+                    for k in ['clips', 'viral_clips', 'segments', 'data', 'recommendations']:
+                        if k in parsed and isinstance(parsed[k], list):
+                            parsed = parsed[k]
                             break
+                    if isinstance(parsed, dict):
+                        for k, v in parsed.items():
+                            if isinstance(v, list):
+                                parsed = v
+                                break
+
                 if isinstance(parsed, list):
                     validated = []
                     for clip in parsed:
-                        dur = clip.get('end_seconds', 0) - clip.get('start_seconds', 0)
+                        s_sec = int(clip.get('start_seconds', 0))
+                        e_sec = int(clip.get('end_seconds', s_sec + 50))
+                        dur = e_sec - s_sec
+                        
                         if not (30 <= dur <= 90):
-                            clip['end_seconds'] = clip.get('start_seconds', 0) + 60
-                            m_end, s_end = divmod(clip['end_seconds'], 60)
+                            e_sec = s_sec + 50
+                            dur = 50
+                            clip['end_seconds'] = e_sec
+                            m_end, s_end = divmod(e_sec, 60)
                             clip['end_time'] = f"{m_end:02d}:{s_end:02d}"
+                        
+                        clip['duration_seconds'] = dur
+                        clip['engine'] = provider_name
                         validated.append(clip)
+                        
                     if validated:
-                        return validated
+                        return (validated, provider_name) if return_provider else validated
         except Exception:
             pass
 
     # Mode Smart Content Scorer Cerdas (Heuristik Berbasis NLP & Hook Detection)
-    return generate_smart_heuristic_clips(transcript)
+    heuristic_clips = generate_smart_heuristic_clips(transcript)
+    for c in heuristic_clips:
+        c['engine'] = "Smart NLP Heuristic (Built-in)"
+    return (heuristic_clips, "Smart NLP Heuristic (Built-in)") if return_provider else heuristic_clips
 
 def generate_smart_heuristic_clips(transcript):
     """
@@ -229,8 +312,8 @@ def generate_smart_heuristic_clips(transcript):
             "end_time": f"00:{int(total_time):02d}",
             "start_seconds": 0,
             "end_seconds": int(total_time),
+            "duration_seconds": int(total_time),
             "viral_score": 85,
-            "reason": "Video berdurasi pendek, cocok langsung dipotong utuh.",
             "caption": "Tonton sampai habis untuk insight lengkapnya! 🔥 #ViralShorts #fyp"
         }]
 
@@ -311,8 +394,8 @@ def generate_smart_heuristic_clips(transcript):
                 "end_time": f"{m_end:02d}:{s_end:02d}",
                 "start_seconds": cand['start_sec'],
                 "end_seconds": cand['end_sec'],
+                "duration_seconds": cand['end_sec'] - cand['start_sec'],
                 "viral_score": cand['score'],
-                "reason": "Segmen ini memiliki konsentrasi poin kunci dan pancingan rasa penasaran yang sangat tinggi.",
                 "caption": f'"{snippet}..."\n\nSetuju gak sama poin ini? Tulis pendapat kalian di kolom komentar! 👇💥 #InsightViral #fyp #Trending'
             })
             if len(selected_clips) >= 4:

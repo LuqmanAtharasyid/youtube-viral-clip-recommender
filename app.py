@@ -1,7 +1,11 @@
 import streamlit as st
 import pandas as pd
-from yt_utils import get_youtube_transcript, analyze_transcript_for_viral_clips
-
+from yt_utils import (
+    get_youtube_transcript,
+    analyze_transcript_for_viral_clips,
+    is_9router_available,
+    auto_detect_ai_config
+)
 st.set_page_config(
     page_title="YouTube Viral Clip & Caption AI",
     page_icon="🎬",
@@ -59,11 +63,19 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# Cek ketersediaan 9router lokal
+has_9router = is_9router_available()
+
 # Sidebar Configuration
 st.sidebar.title("🤖 Konfigurasi AI")
-st.sidebar.markdown("""
-<div class="ai-badge">⚡ AI Engine: Auto-Optimized</div>
-""", unsafe_allow_html=True)
+if has_9router:
+    st.sidebar.markdown("""
+    <div class="ai-badge" style="background-color: #065f46; color: #d1fae5; border: 1px solid #10b981;">⚡ 9router Combo1: Lokal Aktif</div>
+    """, unsafe_allow_html=True)
+else:
+    st.sidebar.markdown("""
+    <div class="ai-badge">⚡ AI Engine: Auto-Optimized</div>
+    """, unsafe_allow_html=True)
 
 st.sidebar.write("**Spesialisasi Model:**")
 st.sidebar.caption("Sistem telah otomatis mengaktifkan parameter model cerdas khusus **Short-Form Content Strategist & Hook Extractor** (30 - 90 detik).")
@@ -71,25 +83,30 @@ st.sidebar.caption("Sistem telah otomatis mengaktifkan parameter model cerdas kh
 api_key_input = st.sidebar.text_input(
     "API Key (OpenAI / OpenRouter / Groq)",
     type="password",
-    help="Opsional. Sistem akan otomatis mendeteksi provider dan memilih model terbaik (misal: GPT-4o untuk OpenAI, Gemini Flash untuk OpenRouter, Llama 3.3 untuk Groq)."
+    help="Opsional jika 9router lokal aktif. Jika diisi, sistem otomatis mendeteksi provider dan menggunakan API Key tersebut."
 )
 
 # Collapsible Manual Override
 with st.sidebar.expander("⚙️ Pengaturan Lanjutan (Opsional)"):
+    model_options = [
+        "Otomatis (9router Combo1 Aktif)" if has_9router else "Otomatis (Rekomendasi AI Terbaik)",
+        "9router / combo1 (Lokal Super Cepat)",
+        "gpt-4o",
+        "google/gemini-2.0-flash-001",
+        "anthropic/claude-3.5-sonnet",
+        "llama-3.3-70b-versatile",
+        "Heuristik Cerdas (Offline / Tanpa AI)"
+    ]
     manual_model = st.selectbox(
         "Pilihan Model Override",
-        [
-            "Otomatis (Rekomendasi AI Terbaik)",
-            "gpt-4o",
-            "google/gemini-2.0-flash-001",
-            "anthropic/claude-3.5-sonnet",
-            "llama-3.3-70b-versatile"
-        ],
+        model_options,
         index=0
     )
 
-st.sidebar.info("💡 Tanpa API Key? Aplikasi tetap berjalan menggunakan **Smart NLP Hook Engine bawaan** secara cerdas & gratis.")
-
+if has_9router:
+    st.sidebar.success("⚡ **9router Combo1 Aktif**: Analisis konten berjalan lokal tanpa biaya kuota token luar.")
+else:
+    st.sidebar.info("💡 Tanpa API Key? Aplikasi tetap berjalan menggunakan **Smart NLP Hook Engine bawaan** secara cerdas & gratis.")
 # Main Interface
 st.markdown('<div class="main-header">🎬 YouTube Viral Clip & Caption AI</div>', unsafe_allow_html=True)
 st.markdown('<div class="sub-header">Tempel link YouTube, sistem akan otomatis memilih segmen paling potensial viral (30-90 detik) lengkap dengan caption pemancing interaksi!</div>', unsafe_allow_html=True)
@@ -110,13 +127,15 @@ if submitted:
                 st.session_state['transcript'] = transcript
                 
                 # Panggil analisis dengan auto-selected model
-                clips = analyze_transcript_for_viral_clips(
+                clips, engine_used = analyze_transcript_for_viral_clips(
                     transcript,
                     api_key=api_key_input,
-                    manual_model=manual_model
+                    manual_model=manual_model,
+                    return_provider=True
                 )
                 st.session_state['clips'] = clips
-                st.success("✅ Analisis selesai! Rekomendasi klip viral telah siap.")
+                st.session_state['engine_used'] = engine_used
+                st.success(f"✅ Analisis selesai menggunakan **{engine_used}**! Rekomendasi klip viral telah siap.")
             except Exception as e:
                 st.error(f"❌ Terjadi kesalahan: {str(e)}")
 
@@ -142,13 +161,16 @@ if 'clips' in st.session_state and st.session_state['clips']:
             end_t = clip.get('end_time', '00:00')
             reason = clip.get('reason', 'Potongan momentum penting.')
             caption = clip.get('caption', 'Coba komen pendapat kalian! #fyp #viral')
+            dur_sec = clip.get('duration_seconds') or (clip.get('end_seconds', 0) - clip.get('start_seconds', 0))
+            engine = clip.get('engine', st.session_state.get('engine_used', 'AI Engine'))
             
             with st.container():
                 st.markdown(f"""
                 <div class="clip-card">
                     <h4 style="margin-top:0;">{title}</h4>
-                    <p><b>⏱️ Durasi Pas:</b> <code>{start_t}</code> s.d. <code>{end_t}</code> &nbsp;&nbsp; 
-                    <span class="metric-badge">Skor Viral: {score}/100</span></p>
+                    <p><b>⏱️ Durasi Pas:</b> <code>{start_t}</code> s.d. <code>{end_t}</code> ({dur_sec}s) &nbsp;&nbsp; 
+                    <span class="metric-badge">Skor Viral: {score}/100</span> &nbsp;&nbsp;
+                    <span style="background-color: #262730; color: #34d399; padding: 3px 8px; border-radius: 4px; font-size: 0.8rem; border: 1px solid #059669;">⚡ {engine}</span></p>
                     <p><b>💡 Analisis Potensi:</b> {reason}</p>
                     <p style="margin-bottom: 5px;"><b>✍️ Rekomendasi Caption:</b></p>
                     <div class="caption-box">{caption}</div>
