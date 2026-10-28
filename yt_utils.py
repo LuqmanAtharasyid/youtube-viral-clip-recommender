@@ -83,6 +83,117 @@ def get_transcript_via_ytdlp(video_url: str, video_id: str):
                         return video_id, transcript_data
                         
         raise RuntimeError("yt-dlp tidak dapat menemukan subtitle atau teks transkrip untuk video ini.")
+def format_srt_time(seconds: float) -> str:
+    """Format detik ke format waktu standar SRT: HH:MM:SS,mmm"""
+    if seconds < 0:
+        seconds = 0.0
+    total_ms = int(round(seconds * 1000))
+    ms = total_ms % 1000
+    total_sec = total_ms // 1000
+    s = total_sec % 60
+    total_min = total_sec // 60
+    m = total_min % 60
+    h = total_min // 60
+    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+def extract_clip_subtitles(transcript, start_seconds: int, end_seconds: int):
+    """
+    Mengekstrak subtitle yang persis berada pada rentang menit/detik klip.
+    Menghasilkan subtitle berformat SRT (relatif mulai 00:00:00 untuk CapCut/Premiere)
+    serta teks dialog yang mudah disalin dan dibaca.
+    """
+    if not transcript:
+        return {
+            "subtitles": [],
+            "srt_relative": "",
+            "srt_absolute": "",
+            "subtitle_text": "",
+            "full_dialogue": ""
+        }
+
+    entries = []
+    for item in transcript:
+        s = float(item.get('start', 0.0))
+        dur = float(item.get('duration', 2.0))
+        e = s + dur
+        if e > start_seconds and s < end_seconds:
+            rel_s = max(0.0, s - start_seconds)
+            rel_e = min(float(end_seconds - start_seconds), e - start_seconds)
+            txt = item.get('text', '').strip()
+            if txt:
+                entries.append({
+                    "rel_start": rel_s,
+                    "rel_end": rel_e,
+                    "abs_start": s,
+                    "abs_end": e,
+                    "text": txt
+                })
+
+    if not entries:
+        closest = [e for e in transcript if abs(e.get('start', 0) - start_seconds) <= 15]
+        for item in closest:
+            txt = item.get('text', '').strip()
+            if txt:
+                entries.append({
+                    "rel_start": 0.0,
+                    "rel_end": float(end_seconds - start_seconds),
+                    "abs_start": float(start_seconds),
+                    "abs_end": float(end_seconds),
+                    "text": txt
+                })
+
+    srt_rel_lines = []
+    srt_abs_lines = []
+    readable_lines = []
+    dialogue_parts = []
+
+    for i, entry in enumerate(entries, 1):
+        t_rel_start = format_srt_time(entry["rel_start"])
+        t_rel_end = format_srt_time(entry["rel_end"])
+        srt_rel_lines.append(f"{i}\n{t_rel_start} --> {t_rel_end}\n{entry['text']}\n")
+
+        t_abs_start = format_srt_time(entry["abs_start"])
+        t_abs_end = format_srt_time(entry["abs_end"])
+        srt_abs_lines.append(f"{i}\n{t_abs_start} --> {t_abs_end}\n{entry['text']}\n")
+
+        m_start = int(entry["abs_start"] // 60)
+        s_start = int(entry["abs_start"] % 60)
+        readable_lines.append(f"[{m_start:02d}:{s_start:02d}] {entry['text']}")
+        dialogue_parts.append(entry['text'])
+
+    return {
+        "subtitles": entries,
+        "srt_relative": "\n".join(srt_rel_lines).strip(),
+        "srt_absolute": "\n".join(srt_abs_lines).strip(),
+        "subtitle_text": "\n".join(readable_lines).strip(),
+        "full_dialogue": " ".join(dialogue_parts).strip()
+    }
+
+def generate_master_srt(clips):
+    """
+    Menggabungkan seluruh subtitle klip menjadi satu file SRT master.
+    """
+    master_lines = []
+    counter = 1
+    for idx, clip in enumerate(clips, 1):
+        title = clip.get('title', f'Klip {idx}')
+        start_t = clip.get('start_time', '00:00')
+        end_t = clip.get('end_time', '00:00')
+        master_lines.append(f"# ===========================================")
+        master_lines.append(f"# KLIP {idx}: {title} ({start_t} - {end_t})")
+        master_lines.append(f"# ===========================================\n")
+        
+        subs = clip.get('subtitles', [])
+        for entry in subs:
+            t_start = format_srt_time(entry["abs_start"])
+            t_end = format_srt_time(entry["abs_end"])
+            master_lines.append(f"{counter}")
+            master_lines.append(f"{t_start} --> {t_end}")
+            master_lines.append(f"{entry['text']}\n")
+            counter += 1
+            
+    return "\n".join(master_lines).strip()
+
 
 def get_9router_config():
     """Mengambil konfigurasi 9router lokal dari env atau ~/.omp/agent/models.yml"""
@@ -291,6 +402,8 @@ def analyze_transcript_for_viral_clips(transcript, api_key: str = None, manual_m
                         
                         clip['duration_seconds'] = dur
                         clip['engine'] = provider_name
+                        sub_data = extract_clip_subtitles(transcript, s_sec, e_sec)
+                        clip.update(sub_data)
                         validated.append(clip)
                         
                     if validated:
@@ -322,7 +435,8 @@ def generate_smart_heuristic_clips(transcript):
             "end_seconds": int(total_time),
             "duration_seconds": int(total_time),
             "viral_score": 85,
-            "caption": "Tonton sampai habis untuk insight lengkapnya! 🔥 #ViralShorts #fyp"
+            "caption": "Tonton sampai habis untuk insight lengkapnya! 🔥 #ViralShorts #fyp",
+            **extract_clip_subtitles(transcript, 0, int(total_time))
         }]
 
     VIRAL_KEYWORDS = {
@@ -404,7 +518,8 @@ def generate_smart_heuristic_clips(transcript):
                 "end_seconds": cand['end_sec'],
                 "duration_seconds": cand['end_sec'] - cand['start_sec'],
                 "viral_score": cand['score'],
-                "caption": f'"{snippet}..."\n\nSetuju gak sama poin ini? Tulis pendapat kalian di kolom komentar! 👇💥 #InsightViral #fyp #Trending'
+                "caption": f'"{snippet}..."\n\nSetuju gak sama poin ini? Tulis pendapat kalian di kolom komentar! 👇💥 #InsightViral #fyp #Trending',
+                **extract_clip_subtitles(transcript, cand['start_sec'], cand['end_sec'])
             })
             if len(selected_clips) >= 4:
                 break

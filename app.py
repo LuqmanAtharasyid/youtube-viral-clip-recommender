@@ -4,7 +4,8 @@ from yt_utils import (
     get_youtube_transcript,
     analyze_transcript_for_viral_clips,
     is_9router_available,
-    auto_detect_ai_config
+    auto_detect_ai_config,
+    generate_master_srt
 )
 st.set_page_config(
     page_title="YouTube Viral Clip & Caption AI",
@@ -49,6 +50,21 @@ st.markdown("""
         font-family: monospace;
         color: #f1f1f1;
         white-space: pre-wrap;
+    }
+    .subtitle-box {
+        background-color: #121316;
+        border: 1px solid #2a2d36;
+        border-radius: 6px;
+        padding: 12px 14px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 0.85rem;
+        color: #e2e8f0;
+        white-space: pre-wrap;
+        max-height: 220px;
+        overflow-y: auto;
+        margin-top: 6px;
+        margin-bottom: 12px;
+        line-height: 1.6;
     }
     .ai-badge {
         background-color: #2e7d32;
@@ -176,15 +192,79 @@ if 'clips' in st.session_state and st.session_state['clips']:
                     <div class="caption-box">{caption}</div>
                 </div>
                 """, unsafe_allow_html=True)
+                
+                # Fitur Subtitle Sinkron pada Menit Klip (Siap Pakai untuk CapCut / Premiere / Reels)
+                sub_text = clip.get('subtitle_text', '')
+                sub_srt = clip.get('srt_relative', '')
+                full_diag = clip.get('full_dialogue', '')
+                
+                with st.expander(f"💬 Subtitle & Naskah Klip #{idx+1} ({start_t} - {end_t}) — Siap Pakai CapCut / Premiere"):
+                    if sub_text:
+                        tab_sub1, tab_sub2, tab_sub3 = st.tabs(["📝 Dialog Sinkron Waktu", "⏱️ Format SRT (Editor Video)", "📄 Naskah Teks Polos"])
+                        with tab_sub1:
+                            st.caption("Dialog percakapan dengan penanda menit asli video:")
+                            st.markdown(f'<div class="subtitle-box">{sub_text}</div>', unsafe_allow_html=True)
+                        with tab_sub2:
+                            st.caption("Format standar .SRT (mulai dari 00:00:00 untuk timeline CapCut / Premiere Pro / DaVinci):")
+                            st.code(sub_srt, language="text")
+                        with tab_sub3:
+                            st.caption("Teks dialog bersih untuk pengisi suara (voiceover) atau teks postingan:")
+                            st.text_area("Teks Percakapan:", value=full_diag, height=120, key=f"diag_area_{idx}")
+                            
+                        col_btn1, col_btn2 = st.columns([1, 1])
+                        with col_btn1:
+                            st.download_button(
+                                label="📥 Download Subtitle (.SRT)",
+                                data=sub_srt,
+                                file_name=f"subtitle_klip_{idx+1}_{start_t.replace(':', '')}-{end_t.replace(':', '')}.srt",
+                                mime="text/plain",
+                                key=f"dl_srt_{idx}"
+                            )
+                        with col_btn2:
+                            st.download_button(
+                                label="📥 Download Naskah Dialog (.TXT)",
+                                data=full_diag,
+                                file_name=f"naskah_klip_{idx+1}_{start_t.replace(':', '')}-{end_t.replace(':', '')}.txt",
+                                mime="text/plain",
+                                key=f"dl_txt_{idx}"
+                            )
+                    else:
+                        st.info("Transkrip spesifik tidak ditemukan pada rentang detik ini.")
 
-    # Opsi Export Data
+    # Opsi Export Data Lengkap
     st.divider()
-    st.subheader("📥 Export Rekomendasi")
-    df_clips = pd.DataFrame(st.session_state['clips'])
-    csv = df_clips.to_csv(index=False).encode('utf-8')
-    st.download_button(
-        label="Download Semua Klip & Caption (CSV)",
-        data=csv,
-        file_name=f"viral_clips_{st.session_state.get('video_id', 'youtube')}.csv",
-        mime='text/csv',
-    )
+    st.subheader("📥 Export Rekomendasi & Subtitle")
+    col_exp1, col_exp2 = st.columns([1, 1])
+    
+    with col_exp1:
+        # Ekspor CSV yang bersih tanpa objek list/dict mentah
+        export_rows = []
+        for c in st.session_state['clips']:
+            export_rows.append({
+                'Judul Klip': c.get('title'),
+                'Mulai': c.get('start_time'),
+                'Selesai': c.get('end_time'),
+                'Durasi (detik)': c.get('duration_seconds'),
+                'Skor Viral': c.get('viral_score'),
+                'Alasan Potensi': c.get('reason'),
+                'Rekomendasi Caption': c.get('caption'),
+                'Teks Dialog Subtitle': c.get('full_dialogue'),
+                'AI Engine': c.get('engine')
+            })
+        df_clips = pd.DataFrame(export_rows)
+        csv = df_clips.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="📊 Download Semua Rekomendasi (CSV)",
+            data=csv,
+            file_name=f"viral_clips_{st.session_state.get('video_id', 'youtube')}.csv",
+            mime='text/csv',
+        )
+        
+    with col_exp2:
+        master_srt_content = generate_master_srt(st.session_state['clips'])
+        st.download_button(
+            label="🎬 Download Semua Subtitle Klip (.SRT Lengkap)",
+            data=master_srt_content,
+            file_name=f"subtitles_master_{st.session_state.get('video_id', 'youtube')}.srt",
+            mime='text/plain',
+        )
