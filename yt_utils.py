@@ -88,7 +88,7 @@ def get_9router_config():
     """Mengambil konfigurasi 9router lokal dari env atau ~/.omp/agent/models.yml"""
     base_url = os.environ.get("NINEROUTER_BASE_URL", "http://localhost:20128/v1").rstrip("/")
     api_key = os.environ.get("NINEROUTER_API_KEY")
-    model = os.environ.get("NINEROUTER_MODEL", "combo1")
+    model = os.environ.get("NINEROUTER_MODEL", "video-clipper")
     
     if not api_key:
         omp_file = os.path.expanduser("~/.omp/agent/models.yml")
@@ -126,7 +126,8 @@ def is_9router_available():
 def auto_detect_ai_config(api_key: str = None, manual_model: str = None):
     """
     Otomatis mendeteksi provider dan memilih model AI paling cocok untuk klip viral:
-    - 9router Lokal (combo1): Berjalan di http://localhost:20128/v1
+    - 9router video-clipper: Combo spesialis kurasi video klip pendek & hook viral (Gemini Flash High / Luna / Claude)
+    - 9router combo1: Combo serbaguna lokal
     - OpenRouter (sk-or-...): google/gemini-2.0-flash-001 atau anthropic/claude-3.5-sonnet
     - Groq (gsk_...): llama-3.3-70b-versatile
     - OpenAI (sk-...): gpt-4o
@@ -138,10 +139,15 @@ def auto_detect_ai_config(api_key: str = None, manual_model: str = None):
     clean_key = api_key.strip() if api_key else ""
     
     # 1. Pilihan manual spesifik 9router
-    if manual_model and ("combo1" in manual_model or "9router" in manual_model):
-        base_url, default_key, default_model = get_9router_config()
+    if manual_model and ("clipper" in manual_model.lower() or "viral-clip" in manual_model.lower()):
+        base_url, default_key, _ = get_9router_config()
         used_key = clean_key if clean_key else default_key
-        return f"{base_url}/chat/completions", "combo1", used_key, "9router (Local combo1)"
+        return f"{base_url}/chat/completions", "video-clipper", used_key, "9router (Video-Clipper AI Specialist)"
+
+    if manual_model and "combo1" in manual_model.lower():
+        base_url, default_key, _ = get_9router_config()
+        used_key = clean_key if clean_key else default_key
+        return f"{base_url}/chat/completions", "combo1", used_key, "9router (combo1)"
 
     # 2. Jika ada API Key eksternal dimasukkan
     if clean_key:
@@ -154,8 +160,8 @@ def auto_detect_ai_config(api_key: str = None, manual_model: str = None):
             best_model = "llama-3.3-70b-versatile"
             provider_name = "Groq (Llama 3.3 Fast)"
         elif clean_key.startswith("sk-4550") or "20128" in clean_key:
-            base_url, default_key, _ = get_9router_config()
-            return f"{base_url}/chat/completions", "combo1", clean_key, "9router (Local combo1)"
+            base_url, default_key, default_model = get_9router_config()
+            return f"{base_url}/chat/completions", default_model, clean_key, f"9router ({default_model})"
         else:
             endpoint = "https://api.openai.com/v1/chat/completions"
             best_model = "gpt-4o"
@@ -167,8 +173,10 @@ def auto_detect_ai_config(api_key: str = None, manual_model: str = None):
     # 3. Tanpa API Key: Cek ketersediaan 9router lokal
     if is_9router_available():
         base_url, default_key, default_model = get_9router_config()
-        chosen_model = manual_model if (manual_model and not manual_model.startswith("Otomatis") and not manual_model.startswith("Auto") and "combo" in manual_model) else default_model
-        return f"{base_url}/chat/completions", chosen_model, default_key, "9router (Local combo1)"
+        chosen_model = default_model
+        if manual_model and not manual_model.startswith("Otomatis") and not manual_model.startswith("Auto"):
+            chosen_model = manual_model
+        return f"{base_url}/chat/completions", chosen_model, default_key, f"9router ({chosen_model})"
 
     # 4. Fallback ke NLP Heuristik bawaan
     return None, None, None, "Smart NLP Heuristic (Built-in)"

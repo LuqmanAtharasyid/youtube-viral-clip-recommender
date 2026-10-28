@@ -70,13 +70,12 @@ has_9router = is_9router_available()
 st.sidebar.title("🤖 Konfigurasi AI")
 if has_9router:
     st.sidebar.markdown("""
-    <div class="ai-badge" style="background-color: #065f46; color: #d1fae5; border: 1px solid #10b981;">⚡ 9router Combo1: Lokal Aktif</div>
+    <div class="ai-badge" style="background-color: #065f46; color: #d1fae5; border: 1px solid #10b981;">⚡ 9router Video-Clipper: Aktif</div>
     """, unsafe_allow_html=True)
 else:
     st.sidebar.markdown("""
     <div class="ai-badge">⚡ AI Engine: Auto-Optimized</div>
     """, unsafe_allow_html=True)
-
 st.sidebar.write("**Spesialisasi Model:**")
 st.sidebar.caption("Sistem telah otomatis mengaktifkan parameter model cerdas khusus **Short-Form Content Strategist & Hook Extractor** (30 - 90 detik).")
 
@@ -89,8 +88,9 @@ api_key_input = st.sidebar.text_input(
 # Collapsible Manual Override
 with st.sidebar.expander("⚙️ Pengaturan Lanjutan (Opsional)"):
     model_options = [
-        "Otomatis (9router Combo1 Aktif)" if has_9router else "Otomatis (Rekomendasi AI Terbaik)",
-        "9router / combo1 (Lokal Super Cepat)",
+        "Otomatis (9router Video-Clipper Spesialis Aktif)" if has_9router else "Otomatis (Rekomendasi AI Terbaik)",
+        "video-clipper (9router AI Khusus Klip Viral)",
+        "combo1 (9router General Model Chain)",
         "gpt-4o",
         "google/gemini-2.0-flash-001",
         "anthropic/claude-3.5-sonnet",
@@ -104,7 +104,7 @@ with st.sidebar.expander("⚙️ Pengaturan Lanjutan (Opsional)"):
     )
 
 if has_9router:
-    st.sidebar.success("⚡ **9router Combo1 Aktif**: Analisis konten berjalan lokal tanpa biaya kuota token luar.")
+    st.sidebar.success("⚡ **9router Video-Clipper Aktif**: Memilih otomatis model AI terbaik untuk hook detection, durasi 30-90s, dan viral caption (Gemini 3.8 Flash High / GPT-5.6 Luna / Claude).")
 else:
     st.sidebar.info("💡 Tanpa API Key? Aplikasi tetap berjalan menggunakan **Smart NLP Hook Engine bawaan** secara cerdas & gratis.")
 # Main Interface
