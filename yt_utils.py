@@ -3,8 +3,16 @@ import re
 import subprocess
 import json
 import tempfile
-from youtube_transcript_api import YouTubeTranscriptApi
 import requests
+
+try:
+    from youtube_transcript_api import YouTubeTranscriptApi
+except Exception:
+    try:
+        import youtube_transcript_api
+        YouTubeTranscriptApi = getattr(youtube_transcript_api, "YouTubeTranscriptApi", None)
+    except Exception:
+        YouTubeTranscriptApi = None
 
 def extract_video_id(url: str) -> str:
     """Ekstrak video ID dari berbagai format URL YouTube."""
@@ -25,25 +33,47 @@ def get_youtube_transcript(video_url: str):
     if not video_id:
         raise ValueError("URL YouTube tidak valid!")
     
-    try:
-        api = YouTubeTranscriptApi()
-        fetched = api.fetch(video_id)
-        transcript_data = []
-        for snippet in fetched.snippets:
-            transcript_data.append({
-                'text': snippet.text,
-                'start': snippet.start,
-                'duration': snippet.duration
-            })
-        return video_id, transcript_data
-    except Exception as e_api:
+    if YouTubeTranscriptApi is not None:
         try:
-            return get_transcript_via_ytdlp(video_url, video_id)
-        except Exception as e_ytdlp:
-            raise RuntimeError(
-                f"Gagal mengambil transkrip. YouTube memblokir akses atau video tidak memiliki subtitle. "
-                f"Detail Error: {str(e_api)} | Fallback Error: {str(e_ytdlp)}"
-            )
+            # 1. Coba format API terbaru (v1.x+: instance fetch)
+            try:
+                api = YouTubeTranscriptApi()
+                fetched = api.fetch(video_id)
+                transcript_data = []
+                for snippet in fetched.snippets:
+                    transcript_data.append({
+                        'text': snippet.text,
+                        'start': snippet.start,
+                        'duration': snippet.duration
+                    })
+                if transcript_data:
+                    return video_id, transcript_data
+            except (TypeError, AttributeError):
+                pass
+                
+            # 2. Coba format API legacy (v0.6.x: static get_transcript)
+            if hasattr(YouTubeTranscriptApi, 'get_transcript'):
+                raw = YouTubeTranscriptApi.get_transcript(video_id)
+                transcript_data = []
+                for item in raw:
+                    transcript_data.append({
+                        'text': item.get('text', ''),
+                        'start': item.get('start', 0.0),
+                        'duration': item.get('duration', 0.0)
+                    })
+                if transcript_data:
+                    return video_id, transcript_data
+        except Exception as e_api:
+            pass
+    
+    # Fallback menggunakan yt-dlp jika youtube_transcript_api gagal atau diblokir
+    try:
+        return get_transcript_via_ytdlp(video_url, video_id)
+    except Exception as e_ytdlp:
+        raise RuntimeError(
+            f"Gagal mengambil transkrip subtitle YouTube. "
+            f"Pastikan video memiliki subtitle atau CC aktif. (Detail: {e_ytdlp})"
+        )
 
 def get_transcript_via_ytdlp(video_url: str, video_id: str):
     """Fallback menggunakan yt-dlp untuk mengunduh subtitle otomatis."""

@@ -1,5 +1,23 @@
+import os
+import sys
+from pathlib import Path
+
+# Pastikan direktori root aplikasi selalu terdaftar di sys.path (khususnya di Streamlit Cloud)
+ROOT_DIR = str(Path(__file__).resolve().parent)
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR)
+
+import importlib
 import streamlit as st
 import pandas as pd
+
+# Paksa reload modul lokal yt_utils agar sinkron saat hot-reload Streamlit Cloud
+try:
+    import yt_utils
+    importlib.reload(yt_utils)
+except Exception:
+    pass
+
 from yt_utils import (
     get_youtube_transcript,
     analyze_transcript_for_viral_clips,
